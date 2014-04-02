@@ -318,18 +318,6 @@ echo "Writing root filesystem..."
 MOUNTOPTS="-o data=writeback,noatime"
 
 
-#mkdir -p tmp_mnt && \
-#$SUDO mount $MOUNTOPTS $PART_NAME_2 tmp_mnt && \
-#echo "installing $SYSTEM_TAR..." &&
-#( cd tmp_mnt && $SUDO tar jxf "$SYSTEM_TAR" ) && \
-#[ $skip_extras != "true" ] && for i in $LTIB_PATH/system.tbz ; do
-#	[ -f "$i" ] || continue
-#	echo "installing $i..."
-#	( cd tmp_mnt \
-#		&& $SUDO tar jxf "$i" )
-#done
-#$SUDO umount tmp_mnt
-#rmdir tmp_mnt
 
 $SUDO mkdir -p tmp_mnt && \
 $SUDO mount $MOUNTOPTS $PART_NAME_2 tmp_mnt && \
@@ -340,31 +328,20 @@ echo "copying files for root ..." && \
 $SUDO cp -r $ANDROID_OUT/root/* . && \
 echo "copying files for system ..." && \
 $SUDO cp -r $ANDROID_OUT/system/* .  && \
-cd .. && $SUDO umount tmp_mnt && $SUDO rmdir tmp_mnt
+cd .. && \
+do_sync && \
+$SUDO umount tmp_mnt && $SUDO rmdir tmp_mnt
 
-
-#data
-#mkdir -p tmp_mnt && \
-#$SUDO mount $MOUNTOPTS $PART_NAME_3 tmp_mnt && \
-#echo "installing $DATA_TAR..." &&
-#( cd tmp_mnt && $SUDO tar jxf "$DATA_TAR" ) && \
-#[ $skip_extras != "true" ] && for i in $LTIB_PATH/data.tbz ; do
-#	[ -f "$i" ] || continue
-#	echo "installing $i..."
-#	( cd tmp_mnt \
-#		&& $SUDO tar jxf "$i" )
-#done
-#$SUDO umount tmp_mnt
-#rmdir tmp_mnt
 
 
 $SUDO mkdir -p tmp_mnt && \
 $SUDO mount $MOUNTOPTS $PART_NAME_3 tmp_mnt && \
-echo "copying data ..." && \
-echo "changing directory ..."  && \
-cd tmp_mnt && \
-echo "copying files for data ..." && \
+echo "copying data ..."  && \
+echo "changing directory ..."   && \
+cd tmp_mnt  && \
+echo "copying files for data ..."  && \
 $SUDO cp -r $ANDROID_OUT/data/* . && \
-cd .. && $SUDO umount tmp_mnt && $SUDO rmdir tmp_mnt
-
-do_sync
+cd ..  && \
+do_sync && \
+$SUDO umount tmp_mnt && \
+$SUDO rmdir tmp_mnt
