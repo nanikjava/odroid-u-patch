@@ -1,0 +1,347 @@
+#! /bin/sh
+
+################################################################################
+#
+# Flashes u-boot, uImage and rootfs. Based on work
+#
+# By RL (Adeneo Embedded http://www.adeneo-embedded.com/)
+#
+# USAGE:
+# ./flash_all [-w [-u URL] [SD card block device]
+#
+# EXAMPLE:
+# sh flash_all /dev/sdb
+#
+# expects u-boot.bin, uImage and rootfs.tbz in the same directory
+#
+# WARNING: reformats and partitions the block device! Make sure you are using
+# the correct device node!
+#
+################################################################################ 
+# switch to default language so we can reliably parse program output
+export LANG=C
+
+#######################################
+# Constants (customizable)
+#######################################
+
+# allow to update without flashing rootfs
+confirm=true
+stop_after_kernel=false
+save_env=false
+skip_extras=false
+web=false
+url='http://download.kernelconcepts.de/~arne/odroidx/'
+flash_files="flash_all bl2.bin p4412_s_tzsw.bin u-boot.bin p4412_s_fwbl1.bin ramdisk.img u-boot.env zImage data-air.tbz data.tbz system-busybox.tbz system-root.tbz system.tbz system-touch.tbz system-latinime.tbz"
+
+while [ $# -gt 1 ] ; do
+	if [ "$1" = -y ] ; then
+		confirm=false
+		shift
+	elif [ "$1" = -k ] ; then
+		stop_after_kernel=true
+		flash_files="flash_all bl2.bin p4412_s_tzsw.bin u-boot.bin p4412_s_fwbl1.bin ramdisk.img u-boot.env zImage"
+		shift
+	elif [ "$1" = -w ] ; then
+		web=true
+		shift
+	elif [ "$1" = -u ] ; then
+		shift
+		url="$1"
+		shift
+	elif [ "$1" = -s ] ; then
+		save_env=true
+		shift
+	elif [ "$1" = -x ] ; then
+		skip_extras=true
+		shift
+	else
+		break
+	fi
+done
+
+if [ "$web" = "true" -a ! -z "$url" ] ; then
+	mkdir -p /tmp/flash-sd
+	cd /tmp/flash-sd || exit 1
+	for i in $flash_files ; do
+		wget -O $i "$url/$i"
+	done
+	exec sh flash_all "$@"
+fi
+
+LTIB_PATH=$(pwd)
+
+if [ $( id -u ) -eq 0 ] ; then
+	SUDO=
+else
+	SUDO=sudo
+fi
+
+#######################################
+# functions
+#######################################
+
+do_sync() {
+	echo -n "syncing"
+	sync ; sync
+	for i in $( seq 6 ) ; do
+		echo -n "."
+		sleep 1
+	done
+	echo
+}
+
+#######################################
+# Check input parameters
+#######################################
+
+SDCARD_DEV=$1
+
+# Simplify the device to its minimal expression
+SDCARD_DEV="$( dirname $SDCARD_DEV )/$( basename $SDCARD_DEV )"
+
+if [ -z $SDCARD_DEV ]; then
+	echo "ERROR: Must set the destination device\n"
+	echo "Syntax:  $0 [device]"
+	echo "Example: $0 /dev/sdg\n"
+	exit 1
+fi
+
+# Make sure we are not trying to write to the primary partition
+if [ $SDCARD_DEV = "/dev/sda" ]; then
+	echo "ERROR: Forbidden to write to /dev/sda"
+	echo "Syntax:  $0 [device]"
+	echo "Example: $0 /dev/sdg\n"
+	exit 1
+fi
+
+# Check that we are writing to a block device
+if [ ! -b $SDCARD_DEV ]; then
+	echo "ERROR: $SDCARD_DEV is not a block device"
+	exit 1
+fi
+
+##########################################
+# Save the bootloader environment to disk
+##########################################
+
+BOOTLOADER_ENV=$LTIB_PATH/u-boot.env
+if [ "$save_env" = true ] ; then
+	$SUDO dd if="$SDCARD_DEV" bs=512 skip=2423 count=32 of="$BOOTLOADER_ENV"
+	echo "U-Boot environment saved to u-boot.env"
+	exit 0
+fi
+
+if [ "$confirm" != false ] ; then
+	echo -n "are you sure to completely erase $SDCARD_DEV? "
+	read y
+	if [ "$y" != y ] ; then
+		exit 0
+	fi
+fi
+
+#######################################
+# Copy the bootloader
+#######################################
+
+BL1_IMG=$LTIB_PATH/p4412_s_fwbl1.bin
+BL2_IMG=$LTIB_PATH/bl2.bin
+BOOTLOADER_IMG=$LTIB_PATH/u-boot.bin
+TZSW_IMG=$LTIB_PATH/p4412_s_tzsw.bin
+
+if [ -s "$BOOTLOADER_IMG" -a -s "$BL1_IMG" -a -s "$BL2_IMG" -a -s "$TZSW_IMG" ] ; then
+	echo "Copying bl1..."
+	$SUDO dd if=$BL1_IMG        of=$SDCARD_DEV bs=512 seek=1   2> /dev/null || exit 1
+	echo "Copying bl2..."
+	$SUDO dd if=$BL2_IMG        of=$SDCARD_DEV bs=512 seek=31  2> /dev/null || exit 1
+	echo "Copying u-boot..."
+	$SUDO dd if=$BOOTLOADER_IMG of=$SDCARD_DEV bs=512 seek=63  2> /dev/null || exit 1
+	echo "Copying tzsw..."
+	$SUDO dd if=$TZSW_IMG       of=$SDCARD_DEV bs=512 seek=2111 2> /dev/null || exit 1
+else
+	echo "skipping u-boot."
+fi
+
+#######################################
+# Copy the bootloader environment
+#######################################
+
+if [ -s "$BOOTLOADER_ENV" ] ; then
+	echo "Copying u-boot env..."
+	$SUDO dd if="$BOOTLOADER_ENV" of=$SDCARD_DEV bs=512 seek=2423 count=32 2> /dev/null || exit 1
+else
+	echo "skipping u-boot env."
+fi
+
+#######################################
+# Copy the update script
+#######################################
+BOOTLOADER_SCRIPT_SRC=$LTIB_PATH/u-boot.script.txt
+BOOTLOADER_SCRIPT=$LTIB_PATH/u-boot.script
+
+if [ -s "$BOOTLOADER_SCRIPT_SRC" ] ; then
+	if [ ! -s "$BOOTLOADER_SCRIPT" -o "$BOOTLOADER_SCRIPT_SRC" -nt "$BOOTLOADER_SCRIPT" ] ; then
+		echo "Updating u-boot script"
+		mkimage -A arm -O linux -T script -C none -a 1 -e 0 -n "MX53 boot script" -d "$BOOTLOADER_SCRIPT_SRC" "$BOOTLOADER_SCRIPT"
+	fi
+fi
+
+if [ -s "$BOOTLOADER_SCRIPT" ] ; then
+	echo "Copying u-boot script"
+echo FIXME
+	#cat "$BOOTLOADER_SCRIPT" /dev/zero | $SUDO dd of=$SDCARD_DEV bs=512 seek=1280 count=128 2> /dev/null || exit 1
+else
+	echo "skipping u-boot script"
+fi
+
+#######################################
+# Copy the ramdisk
+#######################################
+
+RAMDISK_IMG=$LTIB_PATH/ramdisk.img
+
+if [ -s "$RAMDISK_IMG" ] ; then
+	echo "Copying ramdisk..."
+	$SUDO dd if=$RAMDISK_IMG of=$SDCARD_DEV bs=512 seek=18839 2> /dev/null || exit 1
+else
+	echo "skipping ramdisk."
+fi
+
+#######################################
+# Copy the kernel
+#######################################
+
+KERNEL_IMG=$LTIB_PATH/zImage
+
+if [ -s "$KERNEL_IMG" ] ; then
+	echo "Copying kernel..."
+	$SUDO dd if=$KERNEL_IMG of=$SDCARD_DEV bs=512 seek=2455 2> /dev/null || exit 1
+else
+	echo "skipping kernel."
+fi
+
+if [ "$stop_after_kernel" = true ] ; then
+	do_sync
+	exit 0
+fi
+
+SYSTEM_TAR=$LTIB_PATH/system.tbz
+DATA_TAR=$LTIB_PATH/data.tbz
+if [ ! -s "$SYSTEM_TAR" ] ; then
+	echo "skipping partitioning, ext3 formatting and rootfs"
+	do_sync
+	exit 0
+fi
+
+#######################################
+# Create Partition Table
+#######################################
+
+# Unmount everyone
+$SUDO umount ${SDCARD_DEV}* 2> /dev/null
+
+# Check if the device name is mmcblkX
+if echo "${SDCARD_DEV}" | grep -q mmcblk; then
+	PART_NAME_1=${SDCARD_DEV}p1
+	PART_NAME_2=${SDCARD_DEV}p2
+	PART_NAME_3=${SDCARD_DEV}p3
+	PART_NAME_4=${SDCARD_DEV}p4
+else
+	PART_NAME_1=${SDCARD_DEV}1
+	PART_NAME_2=${SDCARD_DEV}2
+	PART_NAME_3=${SDCARD_DEV}3
+	PART_NAME_4=${SDCARD_DEV}4
+fi
+
+SIZE=`$SUDO fdisk -l ${SDCARD_DEV} 2> /dev/null | grep Disk | awk '{print $5}'`
+CYLINDERS=$( expr $SIZE / 8225280 )
+
+if [ $CYLINDERS -eq 0 ]; then
+	echo "ERROR: 0 cylinders\n"
+	exit 1
+fi
+
+echo "DISK SIZE - $SIZE bytes"
+echo "CYLINDERS - $CYLINDERS"
+
+# Create a single ext3 partition while leaving space for U-Boot and kernel
+{
+	echo o
+	echo n
+	echo p
+	echo 2
+	echo 138897		# p2 start
+	echo +2237784		# p2 sectors
+	echo n
+	echo p
+	echo 3
+	echo 2237785		# p3 start
+	echo +6435560		# p3 sectors
+	echo n
+	echo p
+	echo 4
+	echo 6435561		# p4 start
+	echo +6697921		# p4 sectors
+	echo n
+	echo p
+	echo 6697922		# p1 start
+	#echo +15362047		# p1 sectors
+	echo 			# p1 sectors
+	echo t
+	echo 1
+	echo c
+	echo w
+} | $SUDO fdisk -H 255 -S 63 -C $CYLINDERS ${SDCARD_DEV} >/dev/null 2>&1
+
+sleep 5
+$SUDO umount ${SDCARD_DEV}* 2> /dev/null
+
+# Format the vfat partitions
+echo "Formatting partition $PART_NAME_1..."
+$SUDO mkfs.vfat -F32 $PART_NAME_1 #> /dev/null 2>&1 || exit 1
+# Format the ext3 partitions
+echo "Formatting partition $PART_NAME_2 (system)..."
+$SUDO mkfs.ext3 $PART_NAME_2 -L system #> /dev/null 2>&1 || exit 1
+# Format the ext3 partitions
+echo "Formatting partition $PART_NAME_3 (data)..."
+$SUDO mkfs.ext3 $PART_NAME_3 -L data #> /dev/null 2>&1 || exit 1
+# Format the ext3 partitions
+echo "Formatting partition $PART_NAME_4 (cache)..."
+$SUDO mkfs.ext3 $PART_NAME_4 -L cache #> /dev/null 2>&1 || exit 1
+
+#######################################
+# Write the filesytems
+#######################################
+
+echo "Writing root filesystem..."
+MOUNTOPTS="-o data=writeback,noatime"
+
+#system
+mkdir -p tmp_mnt && \
+$SUDO mount $MOUNTOPTS $PART_NAME_2 tmp_mnt && \
+echo "installing $SYSTEM_TAR..." &&
+( cd tmp_mnt && $SUDO tar jxf "$SYSTEM_TAR" ) && \
+[ $skip_extras != "true" ] && for i in $LTIB_PATH/system-*.tbz ; do
+	[ -f "$i" ] || continue
+	echo "installing $i..."
+	( cd tmp_mnt \
+		&& $SUDO tar jxf "$i" )
+done
+$SUDO umount tmp_mnt
+rmdir tmp_mnt
+
+#data
+mkdir -p tmp_mnt && \
+$SUDO mount $MOUNTOPTS $PART_NAME_3 tmp_mnt && \
+echo "installing $DATA_TAR..." &&
+( cd tmp_mnt && $SUDO tar jxf "$DATA_TAR" ) && \
+[ $skip_extras != "true" ] && for i in $LTIB_PATH/data-*.tbz ; do
+	[ -f "$i" ] || continue
+	echo "installing $i..."
+	( cd tmp_mnt \
+		&& $SUDO tar jxf "$i" )
+done
+$SUDO umount tmp_mnt
+rmdir tmp_mnt
+
+do_sync
