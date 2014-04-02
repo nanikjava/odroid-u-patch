@@ -17,6 +17,11 @@
 # WARNING: reformats and partitions the block device! Make sure you are using
 # the correct device node!
 #
+#
+# Modified by : Nanik Tolaram
+#
+# This script has been modified heavily to be used for ODROID-U3 with 8GB sdcard
+#
 ################################################################################ 
 # switch to default language so we can reliably parse program output
 export LANG=C
