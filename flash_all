@@ -135,10 +135,10 @@ fi
 # Copy the bootloader
 #######################################
 
-BL1_IMG=$LTIB_PATH/E4412_S.bl1.HardKernel.bin
-BL2_IMG=$LTIB_PATH/bl2.signed.bin
+BL1_IMG=$LTIB_PATH/bl1.bin
+BL2_IMG=$LTIB_PATH/bl2.bin
 BOOTLOADER_IMG=$LTIB_PATH/u-boot.bin
-TZSW_IMG=$LTIB_PATH/E4412_S.tzsw.signed.bin
+TZSW_IMG=$LTIB_PATH/tzsw.bin
 
 if [ -s "$BOOTLOADER_IMG" -a -s "$BL1_IMG" -a -s "$BL2_IMG" -a -s "$TZSW_IMG" ] ; then
 	echo "Copying bl1..."
